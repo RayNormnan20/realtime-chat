@@ -30,9 +30,9 @@ const io = new Server(httpServer, {
 });
 
 const sql = {
-  insertUser: "INSERT INTO users (username, password_hash, name) VALUES (?, ?, ?)",
-  getUserByUsername: "SELECT * FROM users WHERE username = ?",
-  listUsers: "SELECT id, username, name FROM users ORDER BY id",
+  insertUser: "INSERT INTO users (username, password_hash, name, role_id) VALUES (?, ?, ?, ?)",
+  getUserByUsername: "SELECT u.*, r.name AS role FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.username = ?",
+  listUsers: "SELECT u.id, u.username, u.name, u.enabled, u.role_id, r.name AS role FROM users u LEFT JOIN roles r ON r.id = u.role_id ORDER BY u.id",
   insertChat: "INSERT INTO chats (name) VALUES (?)",
   addMember: "INSERT IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)",
   listUserChats: `
@@ -44,8 +44,12 @@ const sql = {
     WHERE cm.user_id = ?
     ORDER BY (last_time IS NULL), last_time DESC, c.id DESC
   `,
-  listMessages: "SELECT m.id, m.chat_id, m.user_id, u.name, u.username, m.content, m.created_at FROM messages m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? ORDER BY m.id ASC",
-  insertMessage: "INSERT INTO messages (chat_id, user_id, content, created_at) VALUES (?, ?, ?, ?)"
+  listMessages: "SELECT m.id, m.chat_id, m.user_id, u.name, u.username, m.content, m.created_at, m.type, m.image_base64 FROM messages m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? ORDER BY m.id ASC",
+  insertMessage: "INSERT INTO messages (chat_id, user_id, content, created_at, type, image_base64) VALUES (?, ?, ?, ?, ?, ?)",
+  setUserEnabled: "UPDATE users SET enabled = ? WHERE id = ?",
+  listRoles: "SELECT id, name FROM roles ORDER BY id",
+  insertRole: "INSERT INTO roles (name) VALUES (?)",
+  setUserRole: "UPDATE users SET role_id = ? WHERE id = ?"
 };
 
 app.post("/api/auth/register", async (req, res) => {
@@ -55,8 +59,10 @@ app.post("/api/auth/register", async (req, res) => {
     const [rows] = await pool.execute(sql.getUserByUsername, [username]);
     if (rows.length) return res.status(409).json({ error: "usuario existe" });
     const hash = bcrypt.hashSync(password, 10);
-    const [result] = await pool.execute(sql.insertUser, [username, hash, name || username]);
-    const user = { id: result.insertId, username, name: name || username };
+    const [[roleRow]] = await pool.execute(`SELECT id, name FROM roles WHERE name='user' LIMIT 1`);
+    const roleId = roleRow?.id || null;
+    const [result] = await pool.execute(sql.insertUser, [username, hash, name || username, roleId]);
+    const user = { id: result.insertId, username, name: name || username, role: roleRow?.name || 'user', role_id: roleId };
     const token = signUser(user);
     res.json({ user, token });
   } catch (e) {
@@ -70,9 +76,10 @@ app.post("/api/auth/login", async (req, res) => {
     const [rows] = await pool.execute(sql.getUserByUsername, [username]);
     const row = rows[0];
     if (!row) return res.status(401).json({ error: "credenciales" });
+    if (row.enabled === 0) return res.status(403).json({ error: "deshabilitado" });
     const ok = bcrypt.compareSync(password, row.password_hash);
     if (!ok) return res.status(401).json({ error: "credenciales" });
-    const user = { id: row.id, username: row.username, name: row.name };
+    const user = { id: row.id, username: row.username, name: row.name, role: row.role || 'user', role_id: row.role_id || null };
     const token = signUser(user);
     res.json({ user, token });
   } catch (e) {
@@ -87,6 +94,76 @@ app.get("/api/users", authMiddleware, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: "server" });
   }
+});
+
+app.post("/api/admin/users", authMiddleware, async (req, res) => {
+  try {
+    const { username, password, name, role_id, role } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "datos inválidos" });
+    const [rows] = await pool.execute(sql.getUserByUsername, [username]);
+    if (rows.length) return res.status(409).json({ error: "usuario existe" });
+    const hash = bcrypt.hashSync(password, 10);
+    let rid = role_id;
+    if (!rid && role) {
+      const [[rrow]] = await pool.execute(`SELECT id FROM roles WHERE name = ? LIMIT 1`, [role]);
+      rid = rrow?.id || null;
+    }
+    if (!rid) {
+      const [[def]] = await pool.execute(`SELECT id FROM roles WHERE name='user' LIMIT 1`);
+      rid = def?.id || null;
+    }
+    const [result] = await pool.execute(sql.insertUser, [username, hash, name || username, rid]);
+    res.json({ user: { id: result.insertId, username, name: name || username, enabled: 1, role_id: rid } });
+  } catch (e) {
+    res.status(500).json({ error: "server" });
+  }
+});
+
+app.put("/api/admin/users/:id/enabled", authMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { enabled } = req.body;
+    await pool.execute(sql.setUserEnabled, [enabled ? 1 : 0, id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "server" });
+  }
+});
+
+app.get("/api/admin/roles", authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(sql.listRoles);
+    res.json({ roles: rows });
+  } catch (e) {
+    res.status(500).json({ error: "server" });
+  }
+});
+
+app.post("/api/admin/roles", authMiddleware, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: "datos inválidos" });
+    const [[exists]] = await pool.execute(`SELECT id FROM roles WHERE name = ? LIMIT 1`, [String(name)]);
+    if (exists?.id) return res.status(409).json({ error: "rol existe" });
+    const [r] = await pool.execute(sql.insertRole, [String(name)]);
+    res.json({ role: { id: r.insertId, name: String(name) } });
+  } catch (e) {
+    res.status(500).json({ error: "server" });
+  }
+});
+
+app.put("/api/admin/users/:id/role", authMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { role_id, role } = req.body;
+    let rid = role_id;
+    if (!rid && role) {
+      const [[rrow]] = await pool.execute(`SELECT id FROM roles WHERE name = ? LIMIT 1`, [role]);
+      rid = rrow?.id || null;
+    }
+    await pool.execute(sql.setUserRole, [rid, id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: "server" }); }
 });
 
 app.get("/api/chats", authMiddleware, async (req, res) => {
@@ -142,8 +219,11 @@ io.on("connection", socket => {
     try {
       if (!content || !String(content).trim()) return;
       const created_at = Date.now();
-      const [result] = await pool.execute(sql.insertMessage, [chatId, user.id, String(content), created_at]);
-      const message = { id: result.insertId, chat_id: chatId, user_id: user.id, content: String(content), created_at, username: user.username, name: user.name };
+      const type = typeof content === "object" && content?.type ? String(content.type) : "text";
+      const text = type === "text" ? String(content) : String(content?.text || "");
+      const image_base64 = type === "image" ? String(content?.data || "") : null;
+      const [result] = await pool.execute(sql.insertMessage, [chatId, user.id, text, created_at, type, image_base64]);
+      const message = { id: result.insertId, chat_id: chatId, user_id: user.id, content: text, created_at, username: user.username, name: user.name, type, image_base64 };
       io.to(`chat:${chatId}`).emit("message:new", message);
     } catch (e) {
     }

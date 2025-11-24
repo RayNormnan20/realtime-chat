@@ -4,7 +4,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change";
 const TOKEN_TTL = "7d";
 
 export function signUser(user) {
-  return jwt.sign({ id: user.id, username: user.username, name: user.name }, JWT_SECRET, { expiresIn: TOKEN_TTL });
+  return jwt.sign({ id: user.id, username: user.username, name: user.name, role: user.role || 'user' }, JWT_SECRET, { expiresIn: TOKEN_TTL });
 }
 
 export function authMiddleware(req, res, next) {

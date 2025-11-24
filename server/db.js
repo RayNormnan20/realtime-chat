@@ -13,6 +13,13 @@ async function ensureDatabase() {
   await conn.end();
 }
 
+async function ensureColumn(table, column, definition) {
+  const [rows] = await pool.query(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [column]);
+  if (!rows.length) {
+    await pool.query(`ALTER TABLE \`${table}\` ADD COLUMN ${definition}`);
+  }
+}
+
 async function ensureTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -22,6 +29,9 @@ async function ensureTables() {
       name VARCHAR(255)
     ) ENGINE=InnoDB;
   `);
+  await ensureColumn("users", "enabled", "enabled TINYINT(1) NOT NULL DEFAULT 1");
+  await ensureColumn("users", "role", "role VARCHAR(32) NOT NULL DEFAULT 'user'");
+  await ensureColumn("users", "role_id", "role_id INT NULL");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chats (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -44,6 +54,24 @@ async function ensureTables() {
       created_at BIGINT NOT NULL
     ) ENGINE=InnoDB;
   `);
+  await ensureColumn("messages", "type", "type VARCHAR(16) NOT NULL DEFAULT 'text'");
+  await ensureColumn("messages", "image_base64", "image_base64 LONGTEXT");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS roles (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(32) UNIQUE NOT NULL
+    ) ENGINE=InnoDB;
+  `);
+  const [roles] = await pool.query(`SELECT name FROM roles`);
+  if (!roles.find(r => r.name === 'admin')) {
+    await pool.query(`INSERT INTO roles (name) VALUES ('admin'), ('user')`);
+  }
+
+  const [[userRole]] = await pool.query(`SELECT id FROM roles WHERE name='user' LIMIT 1`);
+  if (userRole?.id) {
+    await pool.query(`UPDATE users SET role_id = ? WHERE role_id IS NULL`, [userRole.id]);
+  }
 }
 
 export const ensureReady = (async () => {

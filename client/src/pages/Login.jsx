@@ -15,8 +15,8 @@ export default function Login() {
   const submit = async (e) => {
     e.preventDefault();
     try {
-      const r = tab === "login" ? await api.post("/api/auth/login", { username, password }) : await api.post("/api/auth/register", { username, password, name });
-      setUser(r.data.user); setToken(r.data.token); nav("/");
+      const r = tab == "login" ? await api.post("/api/auth/login", { username, password }) : await api.post("/api/auth/register", { username, password, name });
+      setUser(r.data.user); setToken(r.data.token); nav(r.data.user?.role === 'admin' ? "/admin" : "/");
     } catch (err) { setError("Error de autenticación"); }
   };
 

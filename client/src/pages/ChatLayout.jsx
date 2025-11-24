@@ -4,7 +4,7 @@ import { useAuth } from "../state/auth.jsx";
 import { api } from "../api";
 
 export default function ChatLayout() {
-  const { user, token } = useAuth();
+  const { user, token, logout } = useAuth();
   const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || process.env.REACT_APP_API_URL || "http://localhost:4000";
   const socket = useMemo(() => io(SOCKET_URL, { auth: { token } }), [token]);
   const [chats, setChats] = useState([]);
@@ -16,6 +16,7 @@ export default function ChatLayout() {
   const [newMemberId, setNewMemberId] = useState("");
   const [search, setSearch] = useState("");
   const [profile, setProfile] = useState(null);
+  const [mode, setMode] = useState("chats");
   const fmtTime = (ts) => {
     if (!ts) return "";
     const d = new Date(Number(ts));
@@ -34,7 +35,8 @@ export default function ChatLayout() {
 
   useEffect(() => {
     socket.on("message:new", msg => {
-      if (msg.chat_id === active) setMessages(prev => [...prev, msg]);
+      if (msg.chat_id !== active) return;
+      setMessages(prev => (prev.some(m => m.id === msg.id)) ? prev : [...prev, msg]);
     });
     socket.on("chat:new", chat => setChats(prev => [chat, ...prev]));
     return () => { socket.off("message:new"); socket.off("chat:new"); };
@@ -53,9 +55,20 @@ export default function ChatLayout() {
   const send = () => {
     if (!text.trim() || !active) return;
     socket.emit("message:send", { chatId: active, content: text });
-    setMessages(m => [...m, { chat_id: active, user_id: user.id, content: text, created_at: Date.now(), username: user.username, name: user.name }]);
     setText("");
     setTimeout(()=>{ listRef.current?.scrollTo(0, listRef.current.scrollHeight); }, 0);
+  };
+
+  const onPickImage = async (file) => {
+    if (!file || !active) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = reader.result; // base64
+      const payload = { type: 'image', data, text: '' };
+      socket.emit("message:send", { chatId: active, content: payload });
+      setTimeout(()=>{ listRef.current?.scrollTo(0, listRef.current.scrollHeight); }, 0);
+    };
+    reader.readAsDataURL(file);
   };
 
   const createChat = async () => {
@@ -108,10 +121,25 @@ export default function ChatLayout() {
               <div className="sidebar-user-name">{user?.name || user?.username}</div>
               <div className="sidebar-user-sub">En línea</div>
             </div>
+            <div className="header-actions">
+              <button className="button outline small" onClick={logout}>Salir</button>
+            </div>
           </div>
-          <input className="search-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar o empezar un chat nuevo" />
-          <div className="section-title">Contactos</div>
-          <div className="contacts">
+          <input className="search-input rounded" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar o empezar un chat nuevo" />
+          <div className="nav-icons">
+            <button className={`icon ${mode==='contacts'?'active':''}`} title="Contactos" onClick={()=>setMode('contacts')}>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.418 0-8 2.239-8 5v1h16v-1c0-2.761-3.582-5-8-5Z"/></svg>
+            </button>
+            <button className={`icon ${mode==='chats'?'active':''}`} title="Chats" onClick={()=>setMode('chats')}>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"/></svg>
+            </button>
+            <button className={`icon ${profile?'active':''}`} title="Perfil" onClick={()=>{ if(profile){ setProfile(null);} }}>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm7 8c0-3.866-3.582-7-7-7s-7 3.134-7 7v2h14v-2Z"/></svg>
+            </button>
+          </div>
+        </div>
+        {mode === 'contacts' ? (
+          <div className="list">
             {filteredUsers.map(u => (
               <div key={u.id} className="list-item" onClick={()=>{ setProfile(u.id); setActive(null); }}>
                 <Avatar text={u.name || u.username} />
@@ -124,22 +152,22 @@ export default function ChatLayout() {
               </div>
             ))}
           </div>
-          <div className="section-title">Chats</div>
-        </div>
-        <div className="list">
-          {filteredChats.map(c => (
-            <div key={c.id} className="list-item" onClick={()=>openChat(c)}>
-              <Avatar text={c.name || "Chat"} />
-              <div className="list-item-text">
-                <div className="list-item-meta">
-                  <div className="list-item-title">{c.name || "Chat"}</div>
-                  <div className="list-item-time">{fmtTime(c.last_time)}</div>
+        ) : (
+          <div className="list">
+            {filteredChats.map(c => (
+              <div key={c.id} className="list-item" onClick={()=>openChat(c)}>
+                <Avatar text={c.name || "Chat"} />
+                <div className="list-item-text">
+                  <div className="list-item-meta">
+                    <div className="list-item-title">{c.name || "Chat"}</div>
+                    <div className="list-item-time">{fmtTime(c.last_time)}</div>
+                  </div>
+                  <div className="list-item-sub">{c.last_message || ""}</div>
                 </div>
-                <div className="list-item-sub">{c.last_message || ""}</div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="main">
         <div className="header">
@@ -167,7 +195,13 @@ export default function ChatLayout() {
           {active ? (
             messages.map((m,i)=> (
               <div key={i} className={`msg ${m.user_id===user.id? "mine" : ""}`}>
-                <div className="msg-text">{m.content}</div>
+                {m.type === 'image' ? (
+                  <div className="msg-image-wrap">
+                    <img src={m.image_base64} alt="imagen" className="msg-image" />
+                  </div>
+                ) : (
+                  <div className="msg-text">{m.content}</div>
+                )}
                 <div className="time">{fmtTime(m.created_at)}</div>
               </div>
             ))
@@ -205,6 +239,10 @@ export default function ChatLayout() {
         </div>
         <div className="composer">
           <input className="input" value={text} onChange={e=>setText(e.target.value)} placeholder="Escribe un mensaje" onKeyDown={e=>{ if(e.key==='Enter') send(); }} />
+          <label className="attach">
+            <input type="file" accept="image/*" onChange={e=>onPickImage(e.target.files?.[0])} style={{ display:"none" }} />
+            <span>📎</span>
+          </label>
           <button className="button" onClick={send}>Enviar</button>
         </div>
       </div>
