@@ -64,6 +64,11 @@ body { margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto
 .profile-field { display:flex; gap:8px; font-size:14px; }
 .profile-field span { opacity:.7; }
 .profile-actions { margin-top:8px; }
+.gallery { display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap:8px; }
+.gallery-item { border:1px solid #0d2c33; border-radius:8px; overflow:hidden; cursor:pointer; background:#0f1f24; }
+.gallery-thumb { display:block; width:100%; height:100px; object-fit:cover; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; z-index:50; }
+.modal-image { max-width:90vw; max-height:90vh; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
 .admin-table { width:100%; border-collapse:collapse; color:#e5e7eb; }
 .admin-table th, .admin-table td { border-bottom:1px solid #14223b; padding:8px; text-align:left; }
 .admin-layout { display:grid; grid-template-columns: 220px 1fr; height:100vh; }

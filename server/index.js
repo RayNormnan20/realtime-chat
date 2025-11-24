@@ -35,6 +35,9 @@ const sql = {
   listUsers: "SELECT u.id, u.username, u.name, u.enabled, u.role_id, r.name AS role FROM users u LEFT JOIN roles r ON r.id = u.role_id ORDER BY u.id",
   insertChat: "INSERT INTO chats (name) VALUES (?)",
   addMember: "INSERT IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)",
+  removeMember: "DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?",
+  listChatMembers: "SELECT u.id, u.username, u.name FROM chat_members cm JOIN users u ON u.id = cm.user_id WHERE cm.chat_id = ? ORDER BY u.name, u.username",
+  updateChatName: "UPDATE chats SET name = ? WHERE id = ?",
   listUserChats: `
     SELECT c.id, c.name,
       (SELECT content FROM messages m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message,
@@ -190,6 +193,52 @@ app.post("/api/chats", authMiddleware, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: "server" });
   }
+});
+
+app.get("/api/chats/:id/members", authMiddleware, async (req, res) => {
+  try {
+    const chatId = Number(req.params.id);
+    const [[isMember]] = await pool.execute(`SELECT 1 AS ok FROM chat_members WHERE chat_id = ? AND user_id = ? LIMIT 1`, [chatId, req.user.id]);
+    if (!isMember?.ok) return res.status(403).json({ error: "forbidden" });
+    const [rows] = await pool.execute(sql.listChatMembers, [chatId]);
+    res.json({ members: rows });
+  } catch (e) { res.status(500).json({ error: "server" }); }
+});
+
+app.post("/api/chats/:id/members", authMiddleware, async (req, res) => {
+  try {
+    const chatId = Number(req.params.id);
+    const { memberIds } = req.body;
+    const [[isMember]] = await pool.execute(`SELECT 1 AS ok FROM chat_members WHERE chat_id = ? AND user_id = ? LIMIT 1`, [chatId, req.user.id]);
+    if (!isMember?.ok) return res.status(403).json({ error: "forbidden" });
+    for (const uid of (memberIds || [])) {
+      await pool.execute(sql.addMember, [chatId, Number(uid)]);
+      io.to(`user:${Number(uid)}`).emit("chat:new", { id: chatId });
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: "server" }); }
+});
+
+app.delete("/api/chats/:id/members/:userId", authMiddleware, async (req, res) => {
+  try {
+    const chatId = Number(req.params.id);
+    const userId = Number(req.params.userId);
+    const [[isMember]] = await pool.execute(`SELECT 1 AS ok FROM chat_members WHERE chat_id = ? AND user_id = ? LIMIT 1`, [chatId, req.user.id]);
+    if (!isMember?.ok) return res.status(403).json({ error: "forbidden" });
+    await pool.execute(sql.removeMember, [chatId, userId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: "server" }); }
+});
+
+app.put("/api/chats/:id", authMiddleware, async (req, res) => {
+  try {
+    const chatId = Number(req.params.id);
+    const { name } = req.body;
+    const [[isMember]] = await pool.execute(`SELECT 1 AS ok FROM chat_members WHERE chat_id = ? AND user_id = ? LIMIT 1`, [chatId, req.user.id]);
+    if (!isMember?.ok) return res.status(403).json({ error: "forbidden" });
+    await pool.execute(sql.updateChatName, [name || null, chatId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: "server" }); }
 });
 
 app.get("/api/chats/:id/messages", authMiddleware, async (req, res) => {
