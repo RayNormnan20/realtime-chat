@@ -38,7 +38,12 @@ export default function ChatLayout() {
       if (msg.chat_id !== active) return;
       setMessages(prev => (prev.some(m => m.id === msg.id)) ? prev : [...prev, msg]);
     });
-    socket.on("chat:new", chat => setChats(prev => [chat, ...prev]));
+    socket.on("chat:new", async (chat) => {
+      try {
+        const r = await api.get("/api/chats");
+        setChats(r.data.chats || []);
+      } catch {}
+    });
     return () => { socket.off("message:new"); socket.off("chat:new"); };
   }, [socket, active]);
 
@@ -98,7 +103,7 @@ export default function ChatLayout() {
 
   const activeTitle = () => {
     const chat = chats.find(c => c.id === active);
-    const base = chat?.name || "Chat";
+    const base = chat?.name || chat?.other_name || "Chat";
     const other = messages.find(m => m.user_id !== user?.id);
     return other?.name || other?.username || base;
   };
@@ -156,10 +161,10 @@ export default function ChatLayout() {
           <div className="list">
             {filteredChats.map(c => (
               <div key={c.id} className="list-item" onClick={()=>openChat(c)}>
-                <Avatar text={c.name || "Chat"} />
+                <Avatar text={c.name || c.other_name || "Chat"} />
                 <div className="list-item-text">
                   <div className="list-item-meta">
-                    <div className="list-item-title">{c.name || "Chat"}</div>
+                    <div className="list-item-title">{c.name || c.other_name || "Chat"}</div>
                     <div className="list-item-time">{fmtTime(c.last_time)}</div>
                   </div>
                   <div className="list-item-sub">{c.last_message || ""}</div>
