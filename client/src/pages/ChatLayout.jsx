@@ -15,6 +15,7 @@ export default function ChatLayout() {
   const [users, setUsers] = useState([]);
   const [newMemberId, setNewMemberId] = useState("");
   const [search, setSearch] = useState("");
+  const [profile, setProfile] = useState(null);
   const fmtTime = (ts) => {
     if (!ts) return "";
     const d = new Date(Number(ts));
@@ -74,6 +75,14 @@ export default function ChatLayout() {
     return t.includes(q) || lm.includes(q);
   });
 
+  const filteredUsers = users
+    .filter(u => u.id !== user.id)
+    .filter(u => {
+      const q = search.toLowerCase();
+      const t = (u.name || u.username || "").toLowerCase();
+      return t.includes(q);
+    });
+
   const activeTitle = () => {
     const chat = chats.find(c => c.id === active);
     const base = chat?.name || "Chat";
@@ -93,17 +102,29 @@ export default function ChatLayout() {
     <div className="layout">
       <div className="sidebar">
         <div className="sidebar-head">
-          <div className="sidebar-title">Nuevo chat</div>
-          <input className="search-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar o empezar un chat nuevo" />
-          <div className="newchat">
-            <select className="input" value={newMemberId} onChange={e=>setNewMemberId(e.target.value)}>
-              <option value="">Nuevo chat con...</option>
-              {users.filter(u=>u.id!==user.id).map(u=> (
-                <option key={u.id} value={u.id}>{u.name || u.username}</option>
-              ))}
-            </select>
-            <button className="button" onClick={createChat}>Crear</button>
+          <div className="sidebar-user">
+            <Avatar text={user?.name || user?.username} />
+            <div className="sidebar-user-text">
+              <div className="sidebar-user-name">{user?.name || user?.username}</div>
+              <div className="sidebar-user-sub">En línea</div>
+            </div>
           </div>
+          <input className="search-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar o empezar un chat nuevo" />
+          <div className="section-title">Contactos</div>
+          <div className="contacts">
+            {filteredUsers.map(u => (
+              <div key={u.id} className="list-item" onClick={()=>{ setProfile(u.id); setActive(null); }}>
+                <Avatar text={u.name || u.username} />
+                <div className="list-item-text">
+                  <div className="list-item-meta">
+                    <div className="list-item-title">{u.name || u.username}</div>
+                  </div>
+                  <div className="list-item-sub">Perfil</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="section-title">Chats</div>
         </div>
         <div className="list">
           {filteredChats.map(c => (
@@ -130,6 +151,14 @@ export default function ChatLayout() {
                 <div className="header-sub">En línea</div>
               </div>
             </div>
+          ) : profile ? (
+            <div className="header-user">
+              <Avatar text={(users.find(u=>u.id===profile)?.name) || (users.find(u=>u.id===profile)?.username)} />
+              <div>
+                <div className="header-title">{(users.find(u=>u.id===profile)?.name) || (users.find(u=>u.id===profile)?.username)}</div>
+                <div className="header-sub">Perfil</div>
+              </div>
+            </div>
           ) : (
             <div className="empty-head">Chat en tiempo real</div>
           )}
@@ -142,6 +171,30 @@ export default function ChatLayout() {
                 <div className="time">{fmtTime(m.created_at)}</div>
               </div>
             ))
+          ) : profile ? (
+            <div className="profile">
+              <div className="profile-avatar"><Avatar text={(users.find(u=>u.id===profile)?.name) || (users.find(u=>u.id===profile)?.username)} /></div>
+              <div className="profile-name">{(users.find(u=>u.id===profile)?.name) || (users.find(u=>u.id===profile)?.username)}</div>
+              <div className="profile-fields">
+                <div className="profile-field"><span>Usuario</span><strong>{users.find(u=>u.id===profile)?.username}</strong></div>
+                <div className="profile-field"><span>ID</span><strong>{users.find(u=>u.id===profile)?.id}</strong></div>
+                <div className="profile-field"><span>Estado</span><strong>En línea</strong></div>
+              </div>
+              <div className="profile-actions">
+                <button className="button" onClick={async ()=>{
+                  const r = await api.post("/api/chats", { name: null, memberIds: [Number(profile)] });
+                  const created = r.data.chat;
+                  const u = users.find(x => String(x.id) === String(profile));
+                  const chat = { ...created, name: u?.name || u?.username || created.name };
+                  setChats(prev => [chat, ...prev]);
+                  setActive(created.id);
+                  setProfile(null);
+                  socket.emit("chat:join", { chatId: created.id });
+                  const rr = await api.get(`/api/chats/${created.id}/messages`);
+                  setMessages(rr.data.messages);
+                }}>Iniciar chat</button>
+              </div>
+            </div>
           ) : (
             <div className="empty">
               <div className="empty-icon"></div>
